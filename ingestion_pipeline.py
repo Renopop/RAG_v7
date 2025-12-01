@@ -1147,7 +1147,11 @@ class OptimizedIngestionPipeline:
                 faiss_id = f"{chunk_id}__{uuid.uuid4().hex[:8]}"
 
                 # Utiliser le chemin logique (URL Confluence, etc.) si disponible
-                display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
+                # Pour les pièces jointes, utiliser le chemin du parent comme path
+                if file_info.is_attachment and file_info.parent_file:
+                    display_path = self.logical_paths.get(file_info.parent_file, file_info.parent_file)
+                else:
+                    display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
                 metadata = {
                     "source_file": base_name,
                     "path": display_path,
@@ -1236,7 +1240,11 @@ class OptimizedIngestionPipeline:
                 faiss_id = f"{chunk_id}__{uuid.uuid4().hex[:8]}"
 
                 # Utiliser le chemin logique (URL Confluence, etc.) si disponible
-                display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
+                # Pour les pièces jointes, utiliser le chemin du parent comme path
+                if file_info.is_attachment and file_info.parent_file:
+                    display_path = self.logical_paths.get(file_info.parent_file, file_info.parent_file)
+                else:
+                    display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
                 metadata = {
                     "source_file": base_name,
                     "path": display_path,
