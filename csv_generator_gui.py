@@ -171,12 +171,11 @@ class CSVGeneratorApp(ctk.CTk):
 
         self.default_group_entry = ctk.CTkEntry(
             controls_frame,
-            placeholder_text="ALL",
+            placeholder_text="Groupe par défaut",
             width=120,  # Réduit de 150 à 120
             height=35   # Réduit de 40 à 35
         )
         self.default_group_entry.pack(side="left", padx=5)
-        self.default_group_entry.insert(0, "ALL")
 
         # Bouton appliquer groupe à tous
         apply_group_btn = ctk.CTkButton(
