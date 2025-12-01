@@ -1421,6 +1421,9 @@ class OptimizedIngestionPipeline:
 
         self.stats.faiss_time = time.time() - faiss_start
 
+        # Mettre à jour le nombre réel de chunks indexés
+        self.stats.total_chunks = n
+
         # Cleanup
         del collection
         del store
