@@ -42,6 +42,11 @@ except ImportError:
 # =============================================================================
 
 LLM_OCR_AVAILABLE = False
+DALLEM_API_KEY = None
+DALLEM_API_BASE = None
+LLM_MODEL = None
+create_http_client = None
+
 try:
     from llm_ocr import (
         image_to_base64,
@@ -54,9 +59,14 @@ try:
         LLM_MODEL,
         create_http_client,
     )
-    LLM_OCR_AVAILABLE = True
-except ImportError:
-    logger.debug("[PPTX] Module OCR LLM non disponible - OCR des images désactivé")
+    # Vérifier que la clé API est configurée
+    if DALLEM_API_KEY and DALLEM_API_KEY != "EMPTY":
+        LLM_OCR_AVAILABLE = True
+        logger.info("[PPTX] OCR LLM disponible avec DALLEM")
+    else:
+        logger.warning("[PPTX] DALLEM_API_KEY non configurée - OCR désactivé")
+except ImportError as e:
+    logger.debug(f"[PPTX] Module OCR LLM non disponible: {e}")
 
 
 # =============================================================================
@@ -241,11 +251,15 @@ def ocr_images_with_llm(
     _log = log or logger
 
     if not LLM_OCR_AVAILABLE:
+        print("  ⚠️ [PPTX] OCR LLM non disponible - vérifiez DALLEM_API_KEY")
         _log.warning("[PPTX] OCR LLM non disponible - images ignorées")
         return []
 
     if not images:
+        _log.debug("[PPTX] Aucune image à traiter")
         return []
+
+    print(f"  🔍 [PPTX] OCR de {len(images)} image(s)...")
 
     # Configuration par défaut (DALLEM)
     if api_key is None:
@@ -261,6 +275,7 @@ def ocr_images_with_llm(
 
     for i, (image_bytes, fmt) in enumerate(images):
         try:
+            print(f"      📷 Image {i+1}/{len(images)} ({fmt}, {len(image_bytes)//1024}KB)...", end=" ", flush=True)
             _log.debug(f"[PPTX] OCR image {i+1}/{len(images)} ({fmt})...")
 
             text, confidence = ocr_image_with_llm(
@@ -274,13 +289,17 @@ def ocr_images_with_llm(
 
             if text and confidence > 0.3:
                 texts.append(text)
+                print(f"✅ {len(text)} chars (conf: {confidence:.0%})")
                 _log.debug(f"[PPTX] Image {i+1}: {len(text)} chars, confiance {confidence:.0%}")
             else:
+                print(f"⚠️ pas de texte (conf: {confidence:.0%})")
                 _log.debug(f"[PPTX] Image {i+1}: pas de texte significatif")
 
         except Exception as e:
+            print(f"❌ Erreur: {e}")
             _log.warning(f"[PPTX] Erreur OCR image {i+1}: {e}")
 
+    print(f"  ✅ [PPTX] OCR terminé: {len(texts)}/{len(images)} images avec texte")
     return texts
 
 
@@ -381,7 +400,9 @@ def extract_slide_content(
 
         # OCR des images si demandé
         if ocr_images and image_count > 0:
+            _log.debug(f"[PPTX] Slide {slide_number}: {image_count} images détectées, extraction...")
             images = extract_images_from_slide(slide)
+            _log.debug(f"[PPTX] Slide {slide_number}: {len(images)} images extraites")
             if images:
                 image_texts = ocr_images_with_llm(
                     images=images,
@@ -389,8 +410,13 @@ def extract_slide_content(
                     log=_log
                 )
                 content.image_texts = image_texts
+            else:
+                _log.warning(f"[PPTX] Slide {slide_number}: {image_count} images comptées mais 0 extraites")
+        elif ocr_images:
+            _log.debug(f"[PPTX] Slide {slide_number}: aucune image")
 
     except Exception as e:
+        print(f"  ❌ [PPTX] Erreur slide {slide_number}: {e}")
         _log.error(f"[PPTX] Erreur extraction slide {slide_number}: {e}")
 
     return content
@@ -473,17 +499,27 @@ def extract_text_from_pptx(
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"Fichier introuvable: {file_path}")
 
-    _log.info(f"[PPTX] Extraction: {os.path.basename(file_path)}")
+    filename = os.path.basename(file_path)
+    _log.info(f"[PPTX] Extraction: {filename}")
+    print(f"\n📊 [PPTX] Extraction: {filename}")
 
     try:
         prs = Presentation(file_path)
     except Exception as e:
         raise RuntimeError(f"Impossible d'ouvrir le fichier PPTX: {e}")
 
+    print(f"  📑 Slides: {len(prs.slides)}")
+    print(f"  🔍 OCR images: {'Oui' if ocr_images else 'Non'}")
+    print(f"  🤖 LLM OCR disponible: {'Oui' if LLM_OCR_AVAILABLE else 'Non'}")
+
     # Client HTTP pour OCR (créé une seule fois)
     http_client = None
-    if ocr_images and LLM_OCR_AVAILABLE:
-        http_client = create_http_client()
+    if ocr_images:
+        if LLM_OCR_AVAILABLE:
+            http_client = create_http_client()
+            print(f"  ✅ Client HTTP créé pour OCR")
+        else:
+            print(f"  ⚠️ OCR demandé mais LLM non disponible - vérifiez DALLEM_API_KEY")
 
     all_texts = []
     total_images = 0
@@ -524,6 +560,15 @@ def extract_text_from_pptx(
         slide_text = "\n".join(parts)
         if slide_text.strip():
             all_texts.append(slide_text)
+
+    # Récapitulatif
+    print(f"\n  {'─'*50}")
+    print(f"  ✅ [PPTX] Extraction terminée")
+    print(f"     📑 Slides: {len(prs.slides)}")
+    print(f"     🖼️ Images détectées: {total_images}")
+    print(f"     📝 Images avec texte OCR: {images_with_text}")
+    print(f"     📄 Caractères extraits: {len(''.join(all_texts)):,}")
+    print(f"  {'─'*50}\n")
 
     _log.info(
         f"[PPTX] Extraction terminée: {len(prs.slides)} slides, "
