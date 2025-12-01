@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+rag_da_debug.log
+
+# Local config
+config.json
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+
+# FAISS local cache
+faiss_local_cache/

@@ -1,0 +1,188 @@
+================================================================================
+                    RÉPONSES AUX QUESTIONS RAG - RaGME_UP - PROP
+================================================================================
+
+================================================================================
+1. LOST IN THE MIDDLE - RÉORDONNANCEMENT
+================================================================================
+
+CONFIRMATION : OUI, le réordonnancement est appliqué UNIQUEMENT au contexte
+envoyé au LLM, PAS à l'affichage des résultats.
+
+Code concerné : rag_query.py lignes 862-876
+
+    if use_lost_in_middle and len(sources) > 1:
+        sources = reorder_for_lost_in_middle(sources, strategy="alternating")
+        # Reconstruire context_blocks dans le nouvel ordre
+        context_blocks = [...]  # <- Contexte envoyé au LLM
+
+Comportement :
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  AFFICHAGE UTILISATEUR          │   CONTEXTE ENVOYÉ AU LLM                 │
+├─────────────────────────────────┼───────────────────────────────────────────┤
+│  Source 1 (score: 0.95) ✓       │   [1] Chunk le plus pertinent             │
+│  Source 2 (score: 0.85)         │   [3] Pertinence moyenne                  │
+│  Source 3 (score: 0.75)         │   [5] Pertinence moyenne                  │
+│  Source 4 (score: 0.65)         │   [7] ...                                 │
+│  ...                            │   [8] ...                                 │
+│                                 │   [6] Pertinence moyenne                  │
+│  (Ordre par score décroissant)  │   [4] ...                                 │
+│                                 │   [2] Second plus pertinent               │
+└─────────────────────────────────┴───────────────────────────────────────────┘
+
+L'utilisateur voit TOUJOURS les sources triées par pertinence (score décroissant).
+Le LLM reçoit les sources réordonnées pour maximiser l'attention sur le contenu
+important (début ET fin du contexte).
+
+→ L'objectif de retrouver le bon document/répertoire est préservé côté affichage.
+
+
+================================================================================
+2. DICTIONNAIRE TECHNIQUE - IMPLÉMENTATION
+================================================================================
+
+Le "dictionnaire" technique n'est PAS un mini-RAG ni du SQL.
+
+Implémentation : chunking.py - Variable TECHNICAL_INDICATORS (~750 termes)
+
+C'est un ENSEMBLE PYTHON (set) de mots-clés aéronautiques utilisé pour :
+
+1. CALCUL DE DENSITÉ TECHNIQUE
+   - Compte les termes techniques dans chaque chunk
+   - Classifie : HIGH_DENSITY (>15%), MEDIUM (8-15%), LOW (<8%)
+   - Stocké dans metadata["density_type"] et metadata["density_score"]
+
+2. USAGE
+   - Aide au scoring des chunks (priorité aux chunks techniques)
+   - Pas de recherche RAG dessus
+   - Pas de base de données
+
+Exemple de termes (extrait) :
+    TECHNICAL_INDICATORS = {
+        # Normatif
+        "shall", "must", "compliance", "requirement", "certified",
+        # Structure
+        "fuselage", "wing", "empennage", "longeron", "rivet",
+        # Systèmes
+        "hydraulic", "pneumatic", "electrical", "avionics",
+        # Français
+        "voilure", "nervure", "pylone", "carenage", ...
+    }
+
+→ Simple recherche de mots-clés (O(1) avec un set Python)
+→ Pas de vectorisation, pas de LLM, pas de base SQL
+
+
+================================================================================
+3. CACHE DES REQUÊTES - DEUX NIVEAUX
+================================================================================
+
+Il y a DEUX caches pour les requêtes, tous les deux EN MÉMOIRE RAM :
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NIVEAU 1 : CACHE STREAMLIT (@st.cache_data)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Fichier    : streamlit_RAG.py (fonction cached_rag_query)                  │
+│  Stockage   : MÉMOIRE RAM Python (pas de fichier sur disque)                │
+│  Clé        : hash(question + paramètres)                                   │
+│  TTL        : 30 minutes                                                    │
+│  Invalidé   : Redémarrage Streamlit                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓ (si miss)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  NIVEAU 2 : CACHE SÉMANTIQUE (similarité cosinus)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Fichier    : semantic_cache.py                                             │
+│  Stockage   : MÉMOIRE RAM Python (pas de fichier sur disque)                │
+│  Clé        : embedding question + similarité > 95%                         │
+│  TTL        : 1 heure                                                       │
+│  Invalidé   : Redémarrage Streamlit                                         │
+│                                                                             │
+│  Note: cache_dir n'est PAS passé dans Streamlit → pas de persistance JSON   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CONFIGURATION CACHE SÉMANTIQUE (semantic_cache.py) :
+    DEFAULT_SIMILARITY_THRESHOLD = 0.95  # Seuil pour cache hit
+    DEFAULT_CACHE_TTL = 3600             # 1 heure de validité
+    DEFAULT_MAX_CACHE_SIZE = 1000        # Maximum 1000 entrées
+
+FONCTIONNEMENT :
+    1. Question posée → Embedding calculé
+    2. Recherche dans le cache : similarité cosinus avec questions précédentes
+    3. Si similarité > 95% et même collection → Cache hit (réponse instantanée)
+    4. Sinon → Recherche normale + Ajout au cache
+
+IMPORTANT :
+    ⚠️  AUCUN FICHIER semantic_cache.json N'EST CRÉÉ actuellement
+    ⚠️  Les deux caches sont PERDUS au redémarrage de Streamlit
+    ⚠️  C'est voulu pour éviter des réponses obsolètes
+
+→ Caches en mémoire RAM uniquement
+→ Pas de fichier sur disque
+→ Redémarrage = caches vides
+
+
+================================================================================
+4. CACHE LOCAL DES BASES FAISS (pour performances TT)
+================================================================================
+
+Fichier : faiss_store.py - Classe LocalCacheManager
+
+OÙ EST STOCKÉ LE CACHE LOCAL ?
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Windows : %TEMP%\faiss_local_cache\                                        │
+│  Linux   : /tmp/faiss_local_cache/                                          │
+│                                                                             │
+│  Structure :                                                                │
+│  faiss_local_cache/                                                         │
+│  ├── _cache_info.json          (index des collections en cache)             │
+│  ├── abc123def456/             (hash du chemin réseau)                      │
+│  │   ├── index.faiss           (copie locale de l'index)                   │
+│  │   └── metadata.json         (copie locale des métadonnées)              │
+│  └── ...                                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+DURÉE DE VALIDITÉ :
+    - Basée sur le hash (taille + mtime) du fichier réseau
+    - Si le fichier réseau change → Cache invalidé automatiquement
+    - Pas de TTL fixe (invalide uniquement si source modifiée)
+
+COMBIEN DE BASES MAXIMUM ?
+    - Pas de limite codée en dur
+    - Limité par l'espace disque du répertoire temp
+    - Chaque collection = ~taille de l'index FAISS + métadonnées JSON
+
+ACTIVATION :
+    use_local_cache=True  (paramètre dans les fonctions de requête)
+
+AVANTAGES POUR TT (Travail en Télétravail) :
+    - Première requête : Copie depuis réseau → temps réseau
+    - Requêtes suivantes : Lecture locale → quasi-instantané
+    - Détection automatique si cache obsolète → refresh si nécessaire
+
+INVALIDATION :
+    - Automatique si fichier source modifié
+    - Manuelle : supprimer le dossier faiss_local_cache
+
+→ Stocké dans le répertoire temp du système
+→ Durée illimitée tant que la source n'est pas modifiée
+→ Pas de limite sur le nombre de bases (limité par espace disque)
+
+
+================================================================================
+RÉSUMÉ
+================================================================================
+
+┌────────────────────┬────────────────────────────────────────────────────────┐
+│  Question          │  Réponse                                               │
+├────────────────────┼────────────────────────────────────────────────────────┤
+│  Lost in Middle    │  Appliqué au contexte LLM, PAS à l'affichage          │
+│  Dictionnaire      │  Set Python de 750 mots-clés, pas de mini-RAG         │
+│  Cache requêtes    │  MÉMOIRE RAM uniquement (perdu au restart Streamlit)  │
+│  Cache bases       │  %TEMP%/faiss_local_cache, invalide si source change  │
+│  Nb bases max      │  Illimité (limité par espace disque temp)             │
+└────────────────────┴────────────────────────────────────────────────────────┘
+
+================================================================================
+                              Fin du document
+================================================================================
