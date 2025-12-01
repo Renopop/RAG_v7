@@ -59,12 +59,8 @@ try:
         LLM_MODEL,
         create_http_client,
     )
-    # Vérifier que la clé API est configurée
-    if DALLEM_API_KEY and DALLEM_API_KEY != "EMPTY":
-        LLM_OCR_AVAILABLE = True
-        logger.info("[PPTX] OCR LLM disponible avec DALLEM")
-    else:
-        logger.warning("[PPTX] DALLEM_API_KEY non configurée - OCR désactivé")
+    LLM_OCR_AVAILABLE = True
+    logger.info("[PPTX] OCR LLM disponible avec DALLEM")
 except ImportError as e:
     logger.debug(f"[PPTX] Module OCR LLM non disponible: {e}")
 
