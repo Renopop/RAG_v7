@@ -939,7 +939,7 @@ class OptimizedIngestionPipeline:
                 text = extract_text_from_docx(path)
 
             elif ext in (".ppt", ".pptx"):
-                # PowerPoint: extraction avec OCR optionnel sur les images
+                # PowerPoint: extraction avec OCR automatique sur les images si disponible
                 if not PPTX_AVAILABLE:
                     self.log.warning(
                         f"[PIPELINE] PPTX support not available for {file_info.filename}. "
@@ -947,31 +947,25 @@ class OptimizedIngestionPipeline:
                     )
                     text = ""
                 else:
-                    # Utiliser l'OCR si force_ocr est activé ou si LLM OCR disponible
-                    use_ocr = self.force_ocr and is_pptx_ocr_available()
+                    # Utiliser l'OCR automatiquement si disponible (comme pour les PDF)
+                    ocr_available = is_pptx_ocr_available()
 
-                    if use_ocr:
-                        # Mode OCR: extraction avec OCR sur les images
-                        result = process_pptx_with_ocr(
-                            file_path=path,
-                            quality_threshold=self.quality_threshold,
-                            force_ocr=True,
-                            log=self.log,
-                        )
-                        text = result.get("text", "")
-                        if result.get("ocr_used"):
-                            method = "pptx_ocr"
-                            llm_ocr_used = True
-                            print(f"  🖼️ PPTX OCR: {result.get('images_ocr', 0)} images processed")
-                    else:
-                        # Mode classique: texte uniquement
-                        text = extract_text_from_pptx(
-                            file_path=path,
-                            ocr_images=False,
-                            include_notes=True,
-                            include_tables=True,
-                            log=self.log,
-                        )
+                    # Extraction avec OCR sur les images si disponible
+                    text = extract_text_from_pptx(
+                        file_path=path,
+                        ocr_images=ocr_available,  # OCR automatique si disponible
+                        include_notes=True,
+                        include_tables=True,
+                        log=self.log,
+                    )
+
+                    if ocr_available:
+                        method = "pptx_ocr"
+                        llm_ocr_used = True
+                        # Compter les images OCR dans le texte
+                        ocr_count = text.count("[Image:")
+                        if ocr_count > 0:
+                            print(f"  🖼️ PPTX OCR: {ocr_count} images processed")
 
             elif ext == ".xml":
                 text = extract_text_from_xml(path)
