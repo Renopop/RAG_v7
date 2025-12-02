@@ -2201,8 +2201,14 @@ with (tab_purge if tab_purge is not None else nullcontext()):
 #   Helpers affichage RAG
 # ========================
 
-def open_file_callback(file_path: str):
-    """Callback pour ouvrir un fichier ou une URL sans recharger la page Streamlit"""
+def open_file_callback(file_path: str, page: int = None):
+    """
+    Callback pour ouvrir un fichier ou une URL sans recharger la page Streamlit.
+
+    Args:
+        file_path: Chemin du fichier ou URL
+        page: Numéro de page (1-indexed) pour ouvrir directement à cette page (PDF uniquement)
+    """
     try:
         import subprocess
         import platform
@@ -2215,12 +2221,28 @@ def open_file_callback(file_path: str):
             return
 
         # Sinon, c'est un fichier local
+        is_pdf = file_path.lower().endswith('.pdf')
+
         if platform.system() == "Windows":
-            os.startfile(file_path)
+            if is_pdf and page:
+                # Sur Windows, utiliser l'URI avec fragment #page=X
+                # Les lecteurs PDF modernes (Adobe, Edge, Chrome) supportent ce format
+                webbrowser.open(f"file:///{file_path.replace(os.sep, '/')}#page={page}")
+            else:
+                os.startfile(file_path)
         elif platform.system() == "Darwin":  # macOS
-            subprocess.Popen(["open", file_path])
+            if is_pdf and page:
+                # Sur macOS, Preview supporte l'ouverture à une page via AppleScript
+                # Fallback vers URL avec fragment
+                webbrowser.open(f"file://{file_path}#page={page}")
+            else:
+                subprocess.Popen(["open", file_path])
         else:  # Linux
-            subprocess.Popen(["xdg-open", file_path])
+            if is_pdf and page:
+                # Sur Linux, utiliser l'URI avec fragment
+                webbrowser.open(f"file://{file_path}#page={page}")
+            else:
+                subprocess.Popen(["xdg-open", file_path])
     except Exception as e:
         # Stocker l'erreur dans session_state pour l'afficher
         st.session_state['file_open_error'] = f"Impossible d'ouvrir le fichier : {e}"
@@ -2264,71 +2286,86 @@ def render_sources_list(
     st.markdown(f"### {global_title}")
     for i, src in enumerate(sources, start=1):
         score = float(src.get("score", 0.0) or 0.0)
-        distance = float(src.get("distance", 0.0) or 0.0)
+        score_pct = int(score * 100)
 
-        # Code couleur avec seuils ajustés (plus permissifs)
-        # Vert: score >= 0.5, Orange: score >= 0.3, Rouge: score < 0.3
+        # Code couleur avec seuils ajustés
         if score >= 0.5:
             badge = "🟢"
+            score_color = "green"
         elif score >= 0.3:
             badge = "🟠"
+            score_color = "orange"
         else:
             badge = "🔴"
+            score_color = "red"
 
-        collection_label = ""
-        if show_collection:
-            collection_label = f"[{src.get('collection', '?')}] "
-
-        # Nom du document (source_file)
+        # Infos de base
         doc_name = src.get('source_file', 'unknown')
+        section_id = src.get("section_id") or ""
+        section_title = src.get("section_title") or ""
+        chunk_text = src.get("text", "")
 
-        header = (
-            f"{badge} {i}. {collection_label}"
-            f"{doc_name} "
-            f"(score {score:.3f})"
-        )
+        # Prévisualisation du texte (premiers 150 caractères)
+        preview = chunk_text[:150].replace('\n', ' ').strip()
+        if len(chunk_text) > 150:
+            preview += "..."
 
-        with st.expander(header):
-            # Afficher le chemin complet du fichier
-            file_path = src.get("path", "")
-            is_attachment = src.get("is_attachment", False)
-            parent_file = src.get("parent_file", "")
+        # Collection si affichée
+        collection_label = f"[{src.get('collection', '?')}] " if show_collection else ""
 
-            if file_path:
-                # Détecter si c'est une URL (Confluence, etc.)
-                is_url = file_path.startswith("http://") or file_path.startswith("https://")
+        # Header enrichi avec section EASA visible
+        section_info = f" › **{section_id}**" if section_id else ""
+        header = f"{badge} **{i}.** {collection_label}`{doc_name}`{section_info} — {score_pct}%"
 
-                # Afficher la source avec indication si c'est une pièce jointe ou URL
+        with st.expander(header, expanded=(i <= 3)):  # Ouvre les 3 premiers par défaut
+            # Ligne d'info compacte
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                # Section EASA bien visible
+                if section_id or section_title:
+                    st.markdown(f"📋 **Section:** `{section_id}` {section_title}")
+
+                # Source
+                file_path = src.get("path", "")
+                is_attachment = src.get("is_attachment", False)
+                parent_file = src.get("parent_file", "")
+                is_url = file_path.startswith("http://") or file_path.startswith("https://") if file_path else False
+
                 if is_url:
-                    st.markdown(f"**Source** : [{file_path}]({file_path}) *(Confluence)*")
+                    st.markdown(f"📄 **Source:** [{doc_name}]({file_path})")
                 elif is_attachment and parent_file:
-                    st.markdown(f"**Source** : `{file_path}` *(pièce jointe)*")
-                    st.markdown(f"**Fichier parent** : `{parent_file}`")
+                    st.markdown(f"📎 **Pièce jointe de:** `{os.path.basename(parent_file)}`")
                 else:
-                    st.markdown(f"**Source** : `{file_path}`")
+                    st.markdown(f"📄 **Source:** `{doc_name}`")
 
-                # Bouton pour ouvrir le fichier ou l'URL (utilise un callback pour éviter le rerun)
-                # Pour les pièces jointes, ouvrir le fichier parent
-                file_to_open = parent_file if (is_attachment and parent_file) else file_path
-                file_hash = hashlib.md5(file_to_open.encode()).hexdigest()[:8]
+            with col2:
+                # Bouton ouvrir
+                if file_path:
+                    file_to_open = parent_file if (is_attachment and parent_file) else file_path
+                    file_hash = hashlib.md5(file_to_open.encode()).hexdigest()[:8]
 
-                # Label différent pour URL vs fichier local
-                button_label = "🔗 Ouvrir dans le navigateur" if is_url else "📂 Ouvrir"
-                st.button(
-                    button_label,
-                    key=f"open_{i}_{file_hash}",
-                    on_click=open_file_callback,
-                    args=(file_to_open,)
-                )
+                    # Récupérer le numéro de page si disponible
+                    start_page = src.get("start_page")
 
-            section_id = src.get("section_id") or ""
-            section_title = src.get("section_title") or ""
-            if section_id or section_title:
-                st.markdown("**Section EASA détectée :**")
-                st.write(f"{section_id} {section_title}".strip())
+                    if is_url:
+                        button_label = "🔗 Ouvrir"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open,))
+                    elif start_page and file_to_open.lower().endswith('.pdf'):
+                        # PDF avec page : afficher le numéro de page et ouvrir à cette page
+                        button_label = f"📂 Page {start_page}"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open, start_page))
+                    else:
+                        button_label = "📂 Ouvrir"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open,))
 
-            st.markdown("**Passage utilisé (chunk) :**")
-            st.write(src.get("text", ""))
+            # Texte du chunk avec meilleure mise en forme
+            st.markdown("---")
+            st.markdown("**📝 Extrait:**")
+            # Afficher dans une zone de texte stylée
+            st.markdown(f"""<div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; border-left: 4px solid #{score_color if score_color != 'green' else '28a745'}; font-size: 0.9em;">
+{chunk_text}
+</div>""", unsafe_allow_html=True)
 
 
 # ========================

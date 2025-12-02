@@ -825,7 +825,7 @@ def create_parent_child_chunks(
     source_file: str = "",
     parent_size: int = 3000,
     child_size: int = 800,
-    child_overlap: int = 100,
+    child_overlap: int = 300,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Crée une structure hiérarchique de chunks parent-enfant.
@@ -1396,7 +1396,7 @@ def smart_chunk_generic(
     source_file: str = "",
     chunk_size: int = 1500,
     min_chunk_size: int = 200,
-    overlap: int = 100,
+    overlap: int = 300,
     add_source_prefix: bool = True,
     preserve_lists: bool = True,
     preserve_headers: bool = True,
@@ -1764,7 +1764,7 @@ def smart_chunk_section(
     section: Dict[str, Any],
     max_chunk_size: int = 1500,
     min_chunk_size: int = 200,
-    overlap: int = 100,
+    overlap: int = 300,
     add_context_prefix: bool = True,
 ) -> List[Dict[str, Any]]:
     """

@@ -312,6 +312,88 @@ def _format_size(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
+def _build_page_map(text: str) -> List[Tuple[int, int]]:
+    """
+    Construit une map des positions de début de chaque page dans le texte.
+
+    Détecte les séparateurs de page:
+    - '\f' (form feed) utilisé par pdfminer/pymupdf
+    - '--- Page X ---' utilisé par LLM OCR
+
+    Returns:
+        Liste de tuples (page_number, start_position)
+        page_number est 1-indexed pour l'utilisateur
+    """
+    import re
+
+    page_map = [(1, 0)]  # Page 1 commence à position 0
+    current_page = 1
+
+    # Chercher les form feeds
+    for i, char in enumerate(text):
+        if char == '\f':
+            current_page += 1
+            # Page suivante commence après le form feed
+            page_map.append((current_page, i + 1))
+
+    # Si pas de form feed, chercher les marqueurs "--- Page X ---"
+    if len(page_map) == 1:
+        pattern = r'--- Page (\d+) ---'
+        for match in re.finditer(pattern, text):
+            page_num = int(match.group(1))
+            start_pos = match.start()
+            page_map.append((page_num, start_pos))
+
+        # Trier par position
+        page_map.sort(key=lambda x: x[1])
+
+    return page_map
+
+
+def _get_page_for_position(page_map: List[Tuple[int, int]], position: int) -> int:
+    """
+    Trouve le numéro de page pour une position donnée dans le texte.
+
+    Args:
+        page_map: Liste de (page_number, start_position)
+        position: Position du caractère dans le texte
+
+    Returns:
+        Numéro de page (1-indexed)
+    """
+    if not page_map:
+        return 1
+
+    page = 1
+    for page_num, start_pos in page_map:
+        if start_pos <= position:
+            page = page_num
+        else:
+            break
+
+    return page
+
+
+def _find_chunk_position(full_text: str, chunk_text: str) -> int:
+    """
+    Trouve la position du chunk dans le texte complet.
+
+    Args:
+        full_text: Texte complet du document
+        chunk_text: Texte du chunk
+
+    Returns:
+        Position du premier caractère du chunk, ou 0 si non trouvé
+    """
+    # Prendre les premiers 200 caractères du chunk pour la recherche
+    search_text = chunk_text[:200].strip()
+    if not search_text:
+        return 0
+
+    pos = full_text.find(search_text)
+    return max(0, pos)
+
+
 # =============================================================================
 #  OPTIMIZED INGESTION PIPELINE
 # =============================================================================
@@ -345,7 +427,7 @@ class OptimizedIngestionPipeline:
         db_path: str,
         collection_name: str,
         temp_dir: Optional[str] = None,
-        quality_threshold: float = 0.5,
+        quality_threshold: float = 0.4,
         chunk_size: int = 1500,
         use_semantic_chunking: bool = True,
         use_easa_sections: bool = True,
@@ -1105,6 +1187,12 @@ class OptimizedIngestionPipeline:
 
         chunks: List[ChunkInfo] = []
 
+        # Construire la map des pages pour le suivi de position
+        page_map = _build_page_map(text)
+        has_pages = len(page_map) > 1  # Plus d'une page détectée
+        if has_pages:
+            self.log.debug(f"[CHUNK] Page map built: {len(page_map)} pages detected")
+
         # Analyser la densité pour adapter la taille
         try:
             density_info = _calculate_content_density(text)
@@ -1146,6 +1234,10 @@ class OptimizedIngestionPipeline:
                     display_path = self.logical_paths.get(file_info.parent_file, file_info.parent_file)
                 else:
                     display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
+                # Calculer le numéro de page pour ce chunk
+                chunk_position = _find_chunk_position(text, chunk_text)
+                start_page = _get_page_for_position(page_map, chunk_position) if has_pages else None
+
                 metadata = {
                     "source_file": base_name,
                     "path": display_path,
@@ -1159,6 +1251,10 @@ class OptimizedIngestionPipeline:
                     "extraction_method": result.method,
                     "llm_ocr_used": result.llm_ocr_used,
                 }
+
+                # Ajouter la page de départ si disponible
+                if start_page is not None:
+                    metadata["start_page"] = start_page
 
                 if hasattr(chunk, 'boundary_type'):
                     # Convertir en string pour la sérialisation JSON
@@ -1239,6 +1335,11 @@ class OptimizedIngestionPipeline:
                     display_path = self.logical_paths.get(file_info.parent_file, file_info.parent_file)
                 else:
                     display_path = self.logical_paths.get(file_info.original_path, file_info.original_path)
+
+                # Calculer le numéro de page pour ce chunk
+                chunk_position = _find_chunk_position(text, chunk_text)
+                start_page = _get_page_for_position(page_map, chunk_position) if has_pages else None
+
                 metadata = {
                     "source_file": base_name,
                     "path": display_path,
@@ -1255,6 +1356,10 @@ class OptimizedIngestionPipeline:
                     "extraction_method": result.method,
                     "llm_ocr_used": result.llm_ocr_used,
                 }
+
+                # Ajouter la page de départ si disponible
+                if start_page is not None:
+                    metadata["start_page"] = start_page
 
                 chunks.append(ChunkInfo(
                     text=chunk_text,
@@ -1837,7 +1942,7 @@ def quick_ingest(
     file_paths: List[str],
     db_path: str,
     collection_name: str,
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     force_ocr: bool = False,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
@@ -1879,7 +1984,7 @@ def ingest_csv(
     collection_name: str,
     file_column: str = "path",
     delimiter: str = ";",
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """
@@ -1922,7 +2027,7 @@ def ingest_documents(
     parent_paths: Optional[Dict[str, str]] = None,
     progress_callback: Optional[Callable] = None,
     xml_configs: Optional[Dict] = None,
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     force_ocr: bool = False,
     # Options low memory (None = détection automatique basée sur RAM)
     low_memory: Optional[bool] = None,
