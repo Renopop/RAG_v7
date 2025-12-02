@@ -426,7 +426,14 @@ def _run_rag_query_single_collection(
 
             # Log des entités détectées
             if query_analysis.entities:
-                _log.debug(f"[RAG] Detected entities: {query_analysis.entities}")
+                _log.info(f"[RAG] 📋 Detected EASA entities: {query_analysis.entities}")
+                # Augmenter top_k pour avoir plus de candidats à booster
+                # Cela permet de s'assurer que les chunks avec section_id correspondant
+                # sont inclus même si leur score sémantique est moins bon
+                expanded_top_k = min(top_k * 3, 100)  # Max 100 pour éviter trop de calculs
+                if expanded_top_k > top_k:
+                    _log.info(f"[RAG] Expanding search: top_k {top_k} -> {expanded_top_k} (for EASA reference matching)")
+                    top_k = expanded_top_k
 
             # Calculer les poids optimaux pour la recherche hybride selon l'intent
             # Sauf si l'utilisateur a explicitement spécifié une valeur différente du défaut
@@ -639,9 +646,17 @@ def _run_rag_query_single_collection(
             metas=metas,
             dists=dists,
             entities=query_analysis.entities,
-            boost_factor=0.4,  # Boost significatif pour les matches exacts
+            boost_factor=0.3,  # Boost très significatif pour les matches exacts
             log=_log,
         )
+
+        # Réduire au top_k original après boost
+        # (on avait élargi le search pour avoir plus de candidats à booster)
+        if len(docs) > original_top_k:
+            _log.info(f"[RAG] Trimming results: {len(docs)} -> {original_top_k} after boost")
+            docs = docs[:original_top_k]
+            metas = metas[:original_top_k]
+            dists = dists[:original_top_k]
 
     if not docs:
         _log.warning("[RAG] Aucun document retourné par FAISS")

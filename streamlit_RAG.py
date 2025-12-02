@@ -2201,8 +2201,14 @@ with (tab_purge if tab_purge is not None else nullcontext()):
 #   Helpers affichage RAG
 # ========================
 
-def open_file_callback(file_path: str):
-    """Callback pour ouvrir un fichier ou une URL sans recharger la page Streamlit"""
+def open_file_callback(file_path: str, page: int = None):
+    """
+    Callback pour ouvrir un fichier ou une URL sans recharger la page Streamlit.
+
+    Args:
+        file_path: Chemin du fichier ou URL
+        page: Numéro de page (1-indexed) pour ouvrir directement à cette page (PDF uniquement)
+    """
     try:
         import subprocess
         import platform
@@ -2215,12 +2221,28 @@ def open_file_callback(file_path: str):
             return
 
         # Sinon, c'est un fichier local
+        is_pdf = file_path.lower().endswith('.pdf')
+
         if platform.system() == "Windows":
-            os.startfile(file_path)
+            if is_pdf and page:
+                # Sur Windows, utiliser l'URI avec fragment #page=X
+                # Les lecteurs PDF modernes (Adobe, Edge, Chrome) supportent ce format
+                webbrowser.open(f"file:///{file_path.replace(os.sep, '/')}#page={page}")
+            else:
+                os.startfile(file_path)
         elif platform.system() == "Darwin":  # macOS
-            subprocess.Popen(["open", file_path])
+            if is_pdf and page:
+                # Sur macOS, Preview supporte l'ouverture à une page via AppleScript
+                # Fallback vers URL avec fragment
+                webbrowser.open(f"file://{file_path}#page={page}")
+            else:
+                subprocess.Popen(["open", file_path])
         else:  # Linux
-            subprocess.Popen(["xdg-open", file_path])
+            if is_pdf and page:
+                # Sur Linux, utiliser l'URI avec fragment
+                webbrowser.open(f"file://{file_path}#page={page}")
+            else:
+                subprocess.Popen(["xdg-open", file_path])
     except Exception as e:
         # Stocker l'erreur dans session_state pour l'afficher
         st.session_state['file_open_error'] = f"Impossible d'ouvrir le fichier : {e}"
@@ -2322,8 +2344,20 @@ def render_sources_list(
                 if file_path:
                     file_to_open = parent_file if (is_attachment and parent_file) else file_path
                     file_hash = hashlib.md5(file_to_open.encode()).hexdigest()[:8]
-                    button_label = "🔗 Ouvrir" if is_url else "📂 Ouvrir"
-                    st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open,))
+
+                    # Récupérer le numéro de page si disponible
+                    start_page = src.get("start_page")
+
+                    if is_url:
+                        button_label = "🔗 Ouvrir"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open,))
+                    elif start_page and file_to_open.lower().endswith('.pdf'):
+                        # PDF avec page : afficher le numéro de page et ouvrir à cette page
+                        button_label = f"📂 Page {start_page}"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open, start_page))
+                    else:
+                        button_label = "📂 Ouvrir"
+                        st.button(button_label, key=f"open_{i}_{file_hash}", on_click=open_file_callback, args=(file_to_open,))
 
             # Texte du chunk avec meilleure mise en forme
             st.markdown("---")
