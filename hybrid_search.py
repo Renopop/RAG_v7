@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Seuil pour activer automatiquement la recherche hybride
-HYBRID_MIN_CHUNKS = 500  # Activer BM25 si > 500 chunks (abaissé pour meilleur recall)
+HYBRID_MIN_CHUNKS = 250  # Activer BM25 si > 250 chunks (abaissé pour meilleur recall EASA)
 
 # Poids pour la fusion des scores (dense vs sparse)
-DEFAULT_DENSE_WEIGHT = 0.8  # 80% dense, 20% BM25 (sémantique prioritaire)
-DEFAULT_SPARSE_WEIGHT = 0.2
+DEFAULT_DENSE_WEIGHT = 0.7  # 70% dense, 30% BM25 (meilleur pour références exactes EASA)
+DEFAULT_SPARSE_WEIGHT = 0.3
 
 # Paramètres BM25
 BM25_K1 = 1.5  # Term frequency saturation
