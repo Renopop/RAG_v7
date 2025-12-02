@@ -345,7 +345,7 @@ class OptimizedIngestionPipeline:
         db_path: str,
         collection_name: str,
         temp_dir: Optional[str] = None,
-        quality_threshold: float = 0.5,
+        quality_threshold: float = 0.4,
         chunk_size: int = 1500,
         use_semantic_chunking: bool = True,
         use_easa_sections: bool = True,
@@ -1837,7 +1837,7 @@ def quick_ingest(
     file_paths: List[str],
     db_path: str,
     collection_name: str,
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     force_ocr: bool = False,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
@@ -1879,7 +1879,7 @@ def ingest_csv(
     collection_name: str,
     file_column: str = "path",
     delimiter: str = ";",
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     progress_cb: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """
@@ -1922,7 +1922,7 @@ def ingest_documents(
     parent_paths: Optional[Dict[str, str]] = None,
     progress_callback: Optional[Callable] = None,
     xml_configs: Optional[Dict] = None,
-    quality_threshold: float = 0.5,
+    quality_threshold: float = 0.4,
     force_ocr: bool = False,
     # Options low memory (None = détection automatique basée sur RAM)
     low_memory: Optional[bool] = None,
